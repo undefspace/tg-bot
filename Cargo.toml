@@ -1,0 +1,23 @@
+[package]
+name = "undefspace-tg-bot"
+version = "0.1.0"
+authors = ["Vladimir Serov <me@cab404.ru>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+log = "0.4.8"
+pretty_env_logger = "0.4.0"
+futures = "0.3.14"
+
+reqwest = { version = "0.11.3", features = ["json"] }
+tokio = { version = "1.5", features = ["fs", "rt", "time"]}
+serde = { version = "1.0" }
+async-stream = { version = "" }
+ron = { version = "0.6" }
+teloxide = { version = "0.4" }
+
+[dev-dependencies]
+tokio = { version = "1.5", features = ["macros", "time", "fs", "rt-multi-thread"] }
