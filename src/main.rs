@@ -61,9 +61,8 @@ async fn open_door() -> reqwest::Result<()> {
 async fn run() {
     teloxide::enable_logging!();
     let control_chat_id: i64 = env::var("CONTROL_CHAT_ID")
-        .map(|s| s.parse::<i64>())
-        .unwrap()
-        .unwrap();
+        .map(|s| s.parse::<i64>().expect("Failed to parse CONTROL_CHAT_ID"))
+        .expect("No CONTROL_CHAT_ID in environment");
 
     let door_opener = Arc::from(Mutex::from({
         let (tx, mut rx) = channel::<()>(1);
