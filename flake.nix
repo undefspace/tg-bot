@@ -27,7 +27,7 @@
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
         };
 
-        nixosModule = { system, config, ... }:
+        nixosModule = { config, ... }:
         let name = "undefspace-tg-bot";
         in with nixpkgs.lib; {
             options = {
@@ -51,13 +51,11 @@
             };
             config = mkIf config.services.${name}.enable {
                 systemd.services.${name} = {
+                    wantedBy = [ "multi-user.target" ];
                     script = ''
-                      source $CONFIG
+                      . ${config.services.${name}.config}
                       ${self.defaultPackage."${system}"}/bin/${name}
                     '';
-                    environment = {
-                        CONFIG = config.services.${name}.config;
-                    };
                 };
 
             };
