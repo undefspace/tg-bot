@@ -18,7 +18,7 @@
           buildInputs = with pkgs; [ pkg-config openssl ];
         };
 
-        defaultApp = utils.mkApp {
+        defaultApp = utils.lib.mkApp {
             drv = self.defaultPackage."${system}";
         };
 
