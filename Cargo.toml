@@ -15,8 +15,6 @@ futures = "0.3.14"
 reqwest = { version = "0.11.3", features = ["json"] }
 tokio = { version = "1.5", features = ["fs", "rt", "time"]}
 serde = { version = "1.0" }
-async-stream = { version = "" }
-ron = { version = "0.6" }
 teloxide = { version = "0.4" }
 
 [dev-dependencies]
