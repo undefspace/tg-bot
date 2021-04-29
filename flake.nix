@@ -51,6 +51,7 @@
             };
             config = mkIf config.services.${name}.enable {
                 systemd.services.${name} = {
+                    serviceConfig.Restart = "always";
                     wantedBy = [ "multi-user.target" ];
                     script = ''
                       . ${config.services.${name}.config}
