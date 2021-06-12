@@ -6,7 +6,7 @@ use std::{collections::HashMap, env, sync::Arc, time::Duration, usize};
 use teloxide::{
     dispatching::update_listeners,
     prelude::{GetChatId, Request, UpdateWithCx},
-    types::{MessageEntityKind, UpdateKind},
+    types::{MessageEntityKind, UpdateKind, ParseMode},
 };
 use tokio::sync::mpsc::channel;
 use tokio::{sync::Mutex, time::sleep};
@@ -119,6 +119,7 @@ async fn run() {
                                         &sender.full_name(),
                                         &sender.username.clone().unwrap_or("".to_string())
                                     ))
+                                    .parse_mode(ParseMode::MarkdownV2)
                                     .send()
                                     .await;
                                     door_opener
