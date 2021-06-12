@@ -53,6 +53,7 @@
                 systemd.services.${name} = {
                     serviceConfig.Restart = "always";
                     wantedBy = [ "multi-user.target" ];
+                    after = [ "network.target" ];
                     script = ''
                       . ${config.services.${name}.config}
                       ${self.defaultPackage."${system}"}/bin/${name}
