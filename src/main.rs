@@ -1,5 +1,5 @@
 use futures::StreamExt;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, env, sync::Arc, time::Duration, usize};
@@ -14,7 +14,11 @@ use tokio::{sync::Mutex, time::sleep};
 
 #[tokio::main]
 pub async fn main() {
-    run().await
+    loop {
+        run().await;
+        info!("Restarting in 5 seconds");
+        sleep(Duration::from_secs(5)).await;
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
