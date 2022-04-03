@@ -89,7 +89,7 @@ async fn run() {
                     return;
                 }
             };
-            let result: Result<(), &str> = async {
+            let result: Result<(), String> = async {
                 match update.kind {
                     UpdateKind::Message(msg) => {
                         let cx = UpdateWithCx {
@@ -119,29 +119,26 @@ async fn run() {
                             let res = match command.as_str() {
                                 "open" => {
                                     let sender = cx.update.from().ok_or("No sender: no sending")?;
-                                    &cx.reply_to(format!(
-                                        "Opening a door for *{} [@{}]*",
-                                        &sender.full_name(),
-                                        &sender.username.clone().unwrap_or("".to_string())
-                                    ))
-                                    .parse_mode(ParseMode::MarkdownV2)
-                                    .send()
-                                    .await;
+
+                                    let _ = &cx
+                                        .reply_to(format!(
+                                            "Opening door for [{}]({})\\. Bienvenue\\!",
+                                            teloxide::utils::markdown::escape(sender.full_name().as_str()),
+                                            teloxide::utils::markdown::escape_link_url(sender.url().as_str())
+                                        ))
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .send()
+                                        .await
+                                        .map_err(|e| format!("wtf {:?}", e))?;
+
                                     door_opener
                                         .lock()
                                         .await
                                         .try_send(())
-                                        .map_err(|e| e.to_string())
+                                        .map_err(|e| e.to_string())?;
                                 }
-                                unk => Err(unk.to_string()),
+                                unk => Err(format!("Some strange command: {}", unk))?,
                             };
-                            if let Err(command) = res {
-                                tokio::spawn(
-                                    cx.reply_to(format!("Cannot process command '{}'!", command))
-                                        .send(),
-                                );
-                                warn!("Cannot process command '{}'!", command)
-                            }
                         }
                     }
                     _ => {}
@@ -152,7 +149,9 @@ async fn run() {
 
             match result {
                 Ok(_) => {}
-                Err(e) => debug!("Error while handling an update: {}", e),
+                Err(e) => {
+                    debug!("Error while handling an update: {}", e);
+                }
             };
         }
     }
