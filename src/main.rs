@@ -35,7 +35,7 @@ async fn open_door() -> reqwest::Result<()> {
     map.insert("entity_id", "switch.open_ring_one_door");
     {
         let res = a
-            .post("http://10.0.10.8:8123/api/services/switch/turn_on")
+            .post("http://localhost:8123/api/services/switch/turn_on")
             .bearer_auth(&token)
             .json(&map)
             .send()
@@ -47,7 +47,7 @@ async fn open_door() -> reqwest::Result<()> {
     debug!("Closing RING1 door...");
     {
         let res = a
-            .post("http://10.0.10.8:8123/api/services/switch/turn_off")
+            .post("http://localhost:8123/api/services/switch/turn_off")
             .bearer_auth(&token)
             .json(&map)
             .send()
