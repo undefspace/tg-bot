@@ -35,7 +35,7 @@ impl<'a> Service for ButtonPress<'a> {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 struct Config {
     #[serde(with = "http_serde_ext::authority::option")]
     hass_host: Option<http::uri::Authority>,
@@ -48,7 +48,27 @@ struct Config {
 async fn main() -> Result<()> {
     tracing_forest::init();
     color_eyre::install()?;
-    run(envy::from_env()?).await
+
+    let config: Config = envy::from_env()?;
+    let mut client =
+        hass::client::Client::new(&config.hass_token).expect("successful client creation");
+    if let Some(authority) = config.hass_host {
+        client.authority = authority;
+    }
+    let bot = teloxide::Bot::new(config.teloxide_token);
+    let handler = Update::filter_message().branch(
+        dptree::entry()
+            .filter_command::<ControlCommand>()
+            .filter(move |msg: Message| msg.chat.id == config.control_chat_id)
+            .endpoint(ControlCommand::answer),
+    );
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![client])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
+    Ok(())
 }
 
 static DOOR: hass::types::Entity<'_> = hass::Entity {
@@ -64,7 +84,7 @@ async fn open_door(client: &Client) -> Result<(), hass::client::RequestError> {
 }
 
 /// Commands available to undef members
-#[derive(Clone, Copy, BotCommands)]
+#[derive(Clone, Copy, BotCommands, Debug)]
 #[command(rename_rule = "snake_case")]
 enum ControlCommand {
     /// Open ring 1 door
@@ -116,29 +136,4 @@ impl ControlCommand {
         }
         Ok(())
     }
-}
-
-async fn run(config: Config) -> Result<()> {
-    let mut client =
-        hass::client::Client::new(&config.hass_token).expect("successful client creation");
-
-    if let Some(authority) = config.hass_host {
-        client.authority = authority;
-    }
-    let bot = teloxide::Bot::new(config.teloxide_token);
-
-    let handler = Update::filter_message().branch(
-        dptree::entry()
-            .filter_command::<ControlCommand>()
-            .filter(move |msg: Message| msg.chat.id == config.control_chat_id)
-            .endpoint(ControlCommand::answer),
-    );
-
-    Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![client])
-        .enable_ctrlc_handler()
-        .build()
-        .dispatch()
-        .await;
-    Ok(())
 }
