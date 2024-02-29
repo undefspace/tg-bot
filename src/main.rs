@@ -1,158 +1,139 @@
-use futures::StreamExt;
-use log::{debug, info, warn};
-use reqwest;
+use std::borrow::Cow;
+
+use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, sync::Arc, time::Duration, usize};
 use teloxide::{
-    dispatching::update_listeners,
-    payloads::SendMessageSetters,
-    prelude::{GetChatId, Request, UpdateWithCx},
-    types::{MessageEntityKind, ParseMode, UpdateKind},
+    payloads::SendMessageSetters, prelude::*, types::ParseMode, utils::command::BotCommands,
 };
-use tokio::sync::mpsc::channel;
-use tokio::{sync::Mutex, time::sleep};
+use thiserror::Error;
+use tracing::debug;
+
+mod hass;
+use hass::endpoints::services;
+use hass::{Client, Service, State};
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(transparent)]
+#[repr(transparent)]
+struct ButtonPress<'a>(&'a hass::Entity<'a>);
+
+impl<'a> From<&'a hass::Entity<'a>> for ButtonPress<'a> {
+    fn from(value: &'a hass::Entity<'a>) -> Self {
+        Self(value)
+    }
+}
+
+impl<'a> Service for ButtonPress<'a> {
+    type Output = Vec<State<'a>>;
+
+    fn domain(&self) -> &str {
+        "button"
+    }
+
+    fn service(&self) -> &str {
+        "press"
+    }
+}
+
+#[derive(Clone, Deserialize, Debug)]
+struct Config {
+    #[serde(with = "http_serde_ext::authority::option")]
+    hass_host: Option<http::uri::Authority>,
+    hass_token: String,
+    control_chat_id: ChatId,
+    teloxide_token: String,
+}
 
 #[tokio::main]
-pub async fn main() {
-    loop {
-        run().await;
-        info!("Restarting in 5 seconds");
-        sleep(Duration::from_secs(5)).await;
+async fn main() -> Result<()> {
+    tracing_forest::init();
+    color_eyre::install()?;
+
+    let config: Config = envy::from_env()?;
+    let mut client =
+        hass::client::Client::new(&config.hass_token).expect("successful client creation");
+    if let Some(authority) = config.hass_host {
+        client.authority = authority;
     }
+    let bot = teloxide::Bot::new(config.teloxide_token);
+    let handler = Update::filter_message().branch(
+        dptree::entry()
+            .filter_command::<ControlCommand>()
+            .filter(move |msg: Message| msg.chat.id == config.control_chat_id)
+            .endpoint(ControlCommand::answer),
+    );
+    Dispatcher::builder(bot, handler)
+        .dependencies(dptree::deps![client])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
+    Ok(())
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Config {
-    chat_id: u64,
-}
+static DOOR: hass::types::Entity<'_> = hass::Entity {
+    id: Cow::Borrowed("button.open_ring_1"),
+};
 
-async fn open_door() -> reqwest::Result<()> {
+#[tracing::instrument]
+async fn open_door(client: &Client) -> Result<(), hass::client::RequestError> {
     debug!("Opening RING1 door...");
-    let token = env::var("HASS_TOKEN").unwrap();
-    let a = reqwest::Client::new();
-
-    let mut map = HashMap::new();
-    map.insert("entity_id", "switch.open_ring_one_door");
-    {
-        let res = a
-            .post("http://localhost:8123/api/services/switch/turn_on")
-            .bearer_auth(&token)
-            .json(&map)
-            .send()
-            .await?;
-        debug!("Response: {}", res.text().await?)
-    }
-    sleep(Duration::from_secs(5)).await;
-
-    debug!("Closing RING1 door...");
-    {
-        let res = a
-            .post("http://localhost:8123/api/services/switch/turn_off")
-            .bearer_auth(&token)
-            .json(&map)
-            .send()
-            .await?;
-        debug!("Response: {}", res.text().await?)
-    }
-
-    Result::Ok(())
+    let res = client.execute(services::Post(ButtonPress(&DOOR))).await?;
+    debug!("Response: {res:?}");
+    Ok(())
 }
 
-async fn run() {
-    teloxide::enable_logging!();
-    let control_chat_id: i64 = env::var("CONTROL_CHAT_ID")
-        .map(|s| s.parse::<i64>().expect("Failed to parse CONTROL_CHAT_ID"))
-        .expect("No CONTROL_CHAT_ID in environment");
+/// Commands available to undef members
+#[derive(Clone, Copy, BotCommands, Debug)]
+#[command(rename_rule = "snake_case")]
+enum ControlCommand {
+    /// Open ring 1 door
+    Open,
+    /// Show help message
+    Help,
+}
 
-    let door_opener = Arc::from(Mutex::from({
-        let (tx, mut rx) = channel::<()>(1);
-        tokio::spawn(async move {
-            while let Some(_) = rx.recv().await {
-                if let Err(e) = open_door().await {
-                    warn!("Error while opening door {}", e)
-                };
+#[derive(Error, Debug)]
+enum ControlCommandError {
+    #[error("telegram request failed: {0}")]
+    TelegramRequestError(#[from] teloxide::RequestError),
+    #[error("hass request failed: {0}")]
+    HassRequestError(#[from] hass::client::RequestError),
+}
+
+impl ControlCommand {
+    async fn answer(
+        self,
+        bot: teloxide::Bot,
+        msg: Message,
+        hass: Client,
+    ) -> Result<(), ControlCommandError> {
+        match self {
+            Self::Help => {
+                bot.send_message(msg.chat.id, Self::descriptions().to_string())
+                    .reply_to_message_id(msg.id)
+                    .await?;
             }
-        });
-        tx
-    }));
+            Self::Open => {
+                let sender = msg.from();
 
-    let bot = teloxide::Bot::from_env();
+                bot.send_message(
+                    msg.chat.id,
+                    format!(
+                        "Opening door for {}. Bienvenue!",
+                        sender.map_or("anon".to_owned(), |sender| teloxide::utils::html::link(
+                            sender.url().as_str(),
+                            &sender.full_name()
+                        ))
+                    ),
+                )
+                .reply_to_message_id(msg.id)
+                .parse_mode(ParseMode::Html)
+                .await?;
 
-    loop {
-        let mut f = Box::pin(update_listeners::polling_default(bot.clone()));
-        while let Some(update) = f.next().await {
-            debug!("A new update arrived {:?}", update);
-            let update = match update {
-                Ok(update) => update,
-                Err(error) => {
-                    warn!("Error while receiving update: {}", error);
-                    return;
-                }
-            };
-            let result: Result<(), String> = async {
-                match update.kind {
-                    UpdateKind::Message(msg) => {
-                        let cx = UpdateWithCx {
-                            update: msg,
-                            requester: bot.clone(),
-                        };
-
-                        if cx.chat_id() != control_chat_id {
-                            Err("Message outside the control chat.")?;
-                        }
-                        let text = cx
-                            .update
-                            .text()
-                            .ok_or("no message in a text message :/")?
-                            .to_string();
-                        let commands = cx
-                            .update
-                            .entities()
-                            .ok_or("no entities")?
-                            .iter()
-                            .filter(|c| c.kind == MessageEntityKind::BotCommand)
-                            .map(|s| text[s.offset + 1..s.offset + s.length].to_string())
-                            .filter(|s| s.ends_with("@undefspace_bot"))
-                            .map(|s| s.trim_end_matches("@undefspace_bot").to_string());
-
-                        for command in commands {
-                            let res = match command.as_str() {
-                                "open" => {
-                                    let sender = cx.update.from().ok_or("No sender: no sending")?;
-
-                                    let _ = &cx
-                                        .reply_to(format!(
-                                            "Opening door for [{}]({})\\. Bienvenue\\!",
-                                            teloxide::utils::markdown::escape(sender.full_name().as_str()),
-                                            teloxide::utils::markdown::escape_link_url(sender.url().as_str())
-                                        ))
-                                        .parse_mode(ParseMode::MarkdownV2)
-                                        .send()
-                                        .await
-                                        .map_err(|e| format!("wtf {:?}", e))?;
-
-                                    door_opener
-                                        .lock()
-                                        .await
-                                        .try_send(())
-                                        .map_err(|e| e.to_string())?;
-                                }
-                                unk => Err(format!("Some strange command: {}", unk))?,
-                            };
-                        }
-                    }
-                    _ => {}
-                }
-                Ok(())
+                open_door(&hass).await?;
             }
-            .await;
-
-            match result {
-                Ok(_) => {}
-                Err(e) => {
-                    debug!("Error while handling an update: {}", e);
-                }
-            };
         }
+        Ok(())
     }
 }
